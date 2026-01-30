@@ -202,7 +202,7 @@ def single_site_interaction_MPO_clean(A_list, b_list, R_b):
         W[base + 0, :, base + 0, :] = I2
         W[base + 1, :, base + 0, :] = n_op
         W[base + 1, :, base + 1, :] = x_k * I2
-        W[base + 2, :, base + 1, :] = (A_k * x_k * (R_b**6)/2) * n_op
+        W[base + 2, :, base + 1, :] = (A_k * x_k * R_b**6) * n_op
         W[base + 2, :, base + 2, :] = I2
 
     return W
