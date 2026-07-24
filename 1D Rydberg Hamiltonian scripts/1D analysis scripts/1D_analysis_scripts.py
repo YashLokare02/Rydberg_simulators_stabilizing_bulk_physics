@@ -705,3 +705,543 @@ def compute_edge_exc_detuned(mps_storage_detuned,
         print(f"Rb={float(Rb):.6f}  left={left_exc:.6e}  right={right_exc:.6e}")
 
     return results
+
+# =============================================
+# Helper function to run k-deviation analysis
+# =============================================
+def compute_wavevector_deviation_from_1009(
+    reference_peaks_1009,
+    ramped_results_by_N,
+    uniform_results_by_N,
+    Rb_reference_values=None,
+    N_values=None,
+    scale_factor=2 ** (1 / 6),
+    Rb_tolerance=1e-6,
+    verbose=True,
+):
+    """
+    Compare first wavevectors from ramped and uniform finite chains
+    against the corresponding 1009-site uniform-chain reference.
+
+    Expected finite-chain hierarchy
+    --------------------------------
+    results_by_N[N]["peaks"][Rb_target] = {
+        "Rb_requested": ...,
+        "Rb_stored": ...,
+        "structure_factor_result": {
+            Rb_stored: {
+                "k_peaks_2pi": [...],
+                "k_peaks": [...],
+                "S_peaks": [...],
+            }
+        },
+    }
+    """
+
+    # Rb values at which computations are to be run
+    if Rb_reference_values is None:
+        Rb_reference_values = [
+            3.06,
+            3.07,
+            3.08,
+            3.09,
+            3.10,
+            3.11,
+            3.12,
+            3.13,
+        ]
+
+    # Chain lengths considered
+    if N_values is None:
+        N_values = [
+            121,
+            133,
+            145,
+            157,
+            169,
+            181,
+            193,
+            205,
+        ]
+
+    # Rb reference values
+    Rb_reference_values = np.asarray(
+        Rb_reference_values,
+        dtype=float,
+    )
+
+    # --------------------------------------------------------
+    # Internal helpers
+    # --------------------------------------------------------
+    def find_closest_key(dictionary, target):
+        if not isinstance(dictionary, dict) or len(dictionary) == 0:
+            raise ValueError(
+                "Cannot search for an Rb key in an empty dictionary."
+            )
+
+        return min(
+            dictionary.keys(),
+            key=lambda key: abs(float(key) - float(target)),
+        )
+
+    def extract_first_k_over_2pi(peak_entry):
+        k_peaks = np.asarray(
+            peak_entry.get("k_peaks_2pi", []),
+            dtype=float,
+        )
+
+        if k_peaks.size == 0:
+            return np.nan
+
+        return float(k_peaks[0])
+
+    def unwrap_peak_entry(result_entry):
+        structure_factor_result = result_entry[
+            "structure_factor_result"
+        ]
+
+        if not isinstance(structure_factor_result, dict):
+            raise TypeError(
+                "structure_factor_result must be a dictionary."
+            )
+
+        # Already an unwrapped peak dictionary
+        if "k_peaks_2pi" in structure_factor_result:
+            return structure_factor_result
+
+        if len(structure_factor_result) == 0:
+            return {}
+
+        Rb_stored = result_entry.get(
+            "Rb_stored",
+            result_entry.get("Rb_requested", None),
+        )
+
+        if Rb_stored is not None:
+            inner_key = find_closest_key(
+                structure_factor_result,
+                Rb_stored,
+            )
+            return structure_factor_result[inner_key]
+
+        first_key = next(iter(structure_factor_result))
+        return structure_factor_result[first_key]
+
+    # --------------------------------------------------------
+    # Output hierarchy
+    # --------------------------------------------------------
+    results = {
+        "scale_factor": float(scale_factor),
+        "Rb_reference": Rb_reference_values.copy(),
+        "Rb_finite_target": (
+            Rb_reference_values * scale_factor
+        ),
+        "N_values": list(N_values),
+        "reference_1009": {
+            "Rb": [],
+            "Rb_stored": [],
+            "Rb_difference": [],
+            "k_first_over_2pi": [],
+        },
+        "by_N": {},
+        "by_Rb": {},
+    }
+
+    # ========================================================
+    # Extract 1009-site reference trajectory
+    # ========================================================
+    for Rb_reference in Rb_reference_values:
+        reference_key = find_closest_key(
+            reference_peaks_1009,
+            Rb_reference,
+        )
+
+        Rb_reference_stored = float(reference_key)
+
+        reference_difference = abs(
+            Rb_reference_stored - float(Rb_reference)
+        )
+
+        reference_peak_entry = (
+            reference_peaks_1009[reference_key]
+        )
+
+        k_reference = extract_first_k_over_2pi(
+            reference_peak_entry
+        )
+
+        results["reference_1009"]["Rb"].append(
+            float(Rb_reference)
+        )
+        results["reference_1009"]["Rb_stored"].append(
+            Rb_reference_stored
+        )
+        results["reference_1009"]["Rb_difference"].append(
+            reference_difference
+        )
+        results["reference_1009"][
+            "k_first_over_2pi"
+        ].append(
+            k_reference
+        )
+
+        if (
+            verbose
+            and reference_difference > Rb_tolerance
+        ):
+            print(
+                "Warning for 1009-site reference: "
+                f"requested Rb={Rb_reference:.10f}, "
+                f"using stored Rb={Rb_reference_stored:.10f}, "
+                f"|difference|={reference_difference:.3e}."
+            )
+
+    for key in results["reference_1009"]:
+        results["reference_1009"][key] = np.asarray(
+            results["reference_1009"][key],
+            dtype=float,
+        )
+
+    k_reference_array = results[
+        "reference_1009"
+    ]["k_first_over_2pi"]
+
+    # ========================================================
+    # Extract ramped and uniform finite-chain trajectories
+    # ========================================================
+    for N in N_values:
+        if N not in ramped_results_by_N:
+            raise KeyError(
+                f"N={N} was not found in ramped_results_by_N."
+            )
+
+        if N not in uniform_results_by_N:
+            raise KeyError(
+                f"N={N} was not found in uniform_results_by_N."
+            )
+
+        ramped_data_N = ramped_results_by_N[N]
+        uniform_data_N = uniform_results_by_N[N]
+
+        if "peaks" not in ramped_data_N:
+            raise KeyError(
+                f"Ramped N={N} entry does not contain 'peaks'."
+            )
+
+        if "peaks" not in uniform_data_N:
+            raise KeyError(
+                f"Uniform N={N} entry does not contain 'peaks'."
+            )
+
+        ramped_peaks_N = ramped_data_N["peaks"]
+        uniform_peaks_N = uniform_data_N["peaks"]
+
+        N_result = {
+            "N": N,
+            "n_edge": ramped_data_N.get("n_edge", None),
+            "bulk_size": ramped_data_N.get(
+                "bulk_size",
+                None,
+            ),
+            "scan_key": ramped_data_N.get(
+                "scan_key",
+                None,
+            ),
+            "uniform_delta": uniform_data_N.get(
+                "delta",
+                None,
+            ),
+            "Rb_reference": [],
+            "Rb_finite_target": [],
+            "k_reference_1009": [],
+
+            "Rb_ramped_stored": [],
+            "Rb_ramped_difference": [],
+            "k_ramped": [],
+            "ramped_absolute_deviation": [],
+
+            "Rb_uniform_stored": [],
+            "Rb_uniform_difference": [],
+            "k_uniform": [],
+            "uniform_absolute_deviation": [],
+        }
+
+        for index, Rb_reference in enumerate(
+            Rb_reference_values
+        ):
+            Rb_finite_target = (
+                float(Rb_reference) * scale_factor
+            )
+
+            # ------------------------------------------------
+            # Ramped chain
+            # ------------------------------------------------
+            ramped_key = find_closest_key(
+                ramped_peaks_N,
+                Rb_finite_target,
+            )
+
+            ramped_result_entry = (
+                ramped_peaks_N[ramped_key]
+            )
+
+            Rb_ramped_stored = float(
+                ramped_result_entry.get(
+                    "Rb_stored",
+                    ramped_key,
+                )
+            )
+
+            Rb_ramped_difference = abs(
+                Rb_ramped_stored - Rb_finite_target
+            )
+
+            ramped_peak_entry = unwrap_peak_entry(
+                ramped_result_entry
+            )
+
+            k_ramped = extract_first_k_over_2pi(
+                ramped_peak_entry
+            )
+
+            # ------------------------------------------------
+            # Uniform finite chain
+            # ------------------------------------------------
+            uniform_key = find_closest_key(
+                uniform_peaks_N,
+                Rb_finite_target,
+            )
+
+            uniform_result_entry = (
+                uniform_peaks_N[uniform_key]
+            )
+
+            Rb_uniform_stored = float(
+                uniform_result_entry.get(
+                    "Rb_stored",
+                    uniform_key,
+                )
+            )
+
+            Rb_uniform_difference = abs(
+                Rb_uniform_stored - Rb_finite_target
+            )
+
+            uniform_peak_entry = unwrap_peak_entry(
+                uniform_result_entry
+            )
+
+            k_uniform = extract_first_k_over_2pi(
+                uniform_peak_entry
+            )
+
+            # ------------------------------------------------
+            # Deviations from 1009-site reference
+            # ------------------------------------------------
+            k_reference = k_reference_array[index]
+
+            if (
+                np.isfinite(k_reference)
+                and np.isfinite(k_ramped)
+            ):
+                ramped_absolute_deviation = abs(
+                    k_ramped - k_reference
+                )
+            else:
+                ramped_absolute_deviation = np.nan
+
+            if (
+                np.isfinite(k_reference)
+                and np.isfinite(k_uniform)
+            ):
+                uniform_absolute_deviation = abs(
+                    k_uniform - k_reference
+                )
+            else:
+                uniform_absolute_deviation = np.nan
+
+            # ------------------------------------------------
+            # Store
+            # ------------------------------------------------
+            N_result["Rb_reference"].append(
+                float(Rb_reference)
+            )
+            N_result["Rb_finite_target"].append(
+                Rb_finite_target
+            )
+            N_result["k_reference_1009"].append(
+                k_reference
+            )
+
+            N_result["Rb_ramped_stored"].append(
+                Rb_ramped_stored
+            )
+            N_result["Rb_ramped_difference"].append(
+                Rb_ramped_difference
+            )
+            N_result["k_ramped"].append(
+                k_ramped
+            )
+            N_result[
+                "ramped_absolute_deviation"
+            ].append(
+                ramped_absolute_deviation
+            )
+
+            N_result["Rb_uniform_stored"].append(
+                Rb_uniform_stored
+            )
+            N_result["Rb_uniform_difference"].append(
+                Rb_uniform_difference
+            )
+            N_result["k_uniform"].append(
+                k_uniform
+            )
+            N_result[
+                "uniform_absolute_deviation"
+            ].append(
+                uniform_absolute_deviation
+            )
+
+            if (
+                verbose
+                and Rb_ramped_difference > Rb_tolerance
+            ):
+                print(
+                    f"Warning for ramped N={N}: "
+                    f"reference Rb={Rb_reference:.10f}, "
+                    f"target Rb={Rb_finite_target:.10f}, "
+                    f"stored Rb={Rb_ramped_stored:.10f}, "
+                    f"|difference|={Rb_ramped_difference:.3e}."
+                )
+
+            if (
+                verbose
+                and Rb_uniform_difference > Rb_tolerance
+            ):
+                print(
+                    f"Warning for uniform N={N}: "
+                    f"reference Rb={Rb_reference:.10f}, "
+                    f"target Rb={Rb_finite_target:.10f}, "
+                    f"stored Rb={Rb_uniform_stored:.10f}, "
+                    f"|difference|={Rb_uniform_difference:.3e}."
+                )
+
+        numeric_fields = [
+            "Rb_reference",
+            "Rb_finite_target",
+            "k_reference_1009",
+            "Rb_ramped_stored",
+            "Rb_ramped_difference",
+            "k_ramped",
+            "ramped_absolute_deviation",
+            "Rb_uniform_stored",
+            "Rb_uniform_difference",
+            "k_uniform",
+            "uniform_absolute_deviation",
+        ]
+
+        for field in numeric_fields:
+            N_result[field] = np.asarray(
+                N_result[field],
+                dtype=float,
+            )
+
+        # Backward-compatible alias for previous ramped plotting
+        N_result["absolute_deviation"] = (
+            N_result["ramped_absolute_deviation"]
+        )
+
+        results["by_N"][N] = N_result
+
+    # ========================================================
+    # Reorganize by reference Rb
+    # ========================================================
+    for index, Rb_reference in enumerate(
+        Rb_reference_values
+    ):
+        Rb_float = float(Rb_reference)
+
+        results["by_Rb"][Rb_float] = {
+            "Rb_reference": Rb_float,
+            "Rb_finite_target": float(
+                Rb_reference * scale_factor
+            ),
+            "k_reference_1009": float(
+                k_reference_array[index]
+            ),
+            "chains": {},
+        }
+
+        for N in N_values:
+            N_result = results["by_N"][N]
+
+            results["by_Rb"][Rb_float]["chains"][N] = {
+                "n_edge": N_result["n_edge"],
+
+                "Rb_ramped_stored": float(
+                    N_result["Rb_ramped_stored"][index]
+                ),
+                "k_ramped": float(
+                    N_result["k_ramped"][index]
+                ),
+                "ramped_absolute_deviation": float(
+                    N_result[
+                        "ramped_absolute_deviation"
+                    ][index]
+                ),
+
+                "Rb_uniform_stored": float(
+                    N_result["Rb_uniform_stored"][index]
+                ),
+                "k_uniform": float(
+                    N_result["k_uniform"][index]
+                ),
+                "uniform_absolute_deviation": float(
+                    N_result[
+                        "uniform_absolute_deviation"
+                    ][index]
+                ),
+            }
+
+    # ========================================================
+    # Summary
+    # ========================================================
+    if verbose:
+        print("\n" + "#" * 115)
+        print(
+            "First-wavevector deviations from the "
+            "1009-site uniform-chain reference"
+        )
+        print("#" * 115)
+
+        for index, Rb_reference in enumerate(
+            Rb_reference_values
+        ):
+            print(
+                f"\nRb_reference={Rb_reference:.2f}, "
+                f"Rb_finite_target="
+                f"{Rb_reference * scale_factor:.10f}, "
+                f"k_1009/(2pi)="
+                f"{k_reference_array[index]:.10f}"
+            )
+
+            for N in N_values:
+                N_result = results["by_N"][N]
+
+                print(
+                    f"  N={N:3d}, "
+                    f"n_edge={N_result['n_edge']:2d}, "
+                    f"k_ramped/(2pi)="
+                    f"{N_result['k_ramped'][index]:.10f}, "
+                    f"|Delta k|_ramped="
+                    f"{N_result['ramped_absolute_deviation'][index]:.10e}, "
+                    f"k_uniform/(2pi)="
+                    f"{N_result['k_uniform'][index]:.10f}, "
+                    f"|Delta k|_uniform="
+                    f"{N_result['uniform_absolute_deviation'][index]:.10e}"
+                )
+
+        print("\n" + "#" * 115)
+
+    return results
