@@ -2046,3 +2046,196 @@ def plot_top_configs_stack(
         save_path = save_folder / filename
         fig.savefig(save_path, format="pdf", bbox_inches="tight", dpi=600)
         print(f"✅ Figure saved at: {save_path.resolve()}")
+
+## New Fig. 2(b) -- representative density profile for uniform 1D chain in the floating phase -- L = 121 vs. 1009 site chains
+def plot_uniform_density_profiles_L121_L1009(
+    mps_storage,
+    density_npy_path,
+    N_small=121,
+    Rb_small=3.477854671280277,
+    Rb_large=3.09,
+    delta_value=4.0588235294117645,
+    save_path=None,
+):
+    # LaTeX rendering for subplots
+    plt.rcParams.update({
+        "text.usetex": False,
+        "font.family": "serif",
+        "font.serif": ["Nimbus Roman"],
+        "mathtext.fontset": "stix",
+        "font.size": 12,
+        "legend.frameon": False,
+    })
+
+    # L = 121 profile from MPS
+    mps = mps_storage[(Rb_small, delta_value)]
+    dens_small = np.array([
+        get_site_excitation_probability(mps, N_small, j)
+        for j in range(N_small)
+    ])
+    Rb_small_display = Rb_small / 2 ** (1/6)
+
+    # L = 1009 profile from .npy
+    dens_large = np.load(density_npy_path)
+    N_large = len(dens_large)
+
+    # Visualization
+    fig, axes = plt.subplots(
+        1, 2, figsize=(6.8, 3.0), dpi=600, constrained_layout=True
+    )
+
+    panels = [
+        (axes[0], np.arange(N_small), dens_small, N_small, Rb_small_display),
+        (axes[1], np.arange(N_large), dens_large, N_large, Rb_large),
+    ]
+
+    for ax, sites, dens, N, Rb in panels:
+        ax.plot(
+            sites,
+            dens,
+            color="black",
+            linewidth=1.2,
+            marker="o" if N <= 150 else None,
+            markersize=2.4,
+            label=fr"$R_b={Rb:.3f}$",
+        )
+
+        ax.set_xlabel(r"Site $j$", fontsize=12)
+        ax.set_ylabel(r"$\langle n_j\rangle$", fontsize=12)
+        ax.set_xlim(-0.5, N - 0.5)
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+        ax.tick_params(axis="both", labelsize=12)
+        ax.legend(loc="best", fontsize=12)
+        ax.grid(alpha=0.25, linewidth=0.5)
+
+    axes[0].set_title(r"$L = 121$")
+    axes[1].set_title(r"$L \rightarrow \infty$")
+
+    if save_path is not None:
+        fig.savefig(save_path, bbox_inches="tight", dpi=600)
+    else:
+        plt.show()
+
+    return dens_small, dens_large
+
+## New Fig. 6(b) -- representative density profiles in the floating phase: uniform chain vs. boundary detuning
+def plot_uniform_vs_boundary_density_profile(
+    mps_uniform_chain,
+    mps_boundary_detuning,
+    Rb_value,
+    N=121,
+    uniform_n_edge=18,
+    boundary_n_edge=24,
+    alpha=0.1,
+    alpha_config="minus_minus",
+    save_path=None,
+):
+    # LaTeX rendering for figure
+    plt.rcParams.update({
+        "text.usetex": False,
+        "font.family": "serif",
+        "font.serif": ["Nimbus Roman"],
+        "mathtext.fontset": "stix",
+        "font.size": 12,
+        "legend.frameon": False,
+    })
+
+    # Extract MPS and corresponding density profile
+    mps_uniform = mps_uniform_chain[uniform_n_edge][Rb_value]
+
+    boundary_key = (alpha, alpha_config, boundary_n_edge)
+    mps_boundary = mps_boundary_detuning[boundary_key][boundary_n_edge][Rb_value]
+
+    sites = np.arange(N)
+
+    dens_uniform = np.array([
+        get_site_excitation_probability(mps_uniform, N, j)
+        for j in range(N)
+    ])
+
+    dens_boundary = np.array([
+        get_site_excitation_probability(mps_boundary, N, j)
+        for j in range(N)
+    ])
+
+    # Visualization
+    fig, ax = plt.subplots(figsize=(6.2, 3.2), dpi=600)
+
+    ax.plot(
+        sites,
+        dens_uniform,
+        marker="s",
+        markersize=2.4,
+        linewidth=1.4,
+        label=fr"Uniform chain",
+    )
+
+    ax.plot(
+        sites,
+        dens_boundary,
+        marker="o",
+        markersize=2.4,
+        linewidth=1.4,
+        label=fr"Boundary detuning",
+    )
+
+    # Optional: mark boundary-detuned bulk region
+    ax.axvspan(
+        -0.5,
+        boundary_n_edge - 0.5,
+        alpha=0.12,
+        color="gray",
+        zorder=0,
+    )
+    ax.axvspan(
+        N - boundary_n_edge - 0.5,
+        N - 0.5,
+        alpha=0.12,
+        color="gray",
+        zorder=0,
+    )
+
+    ax.set_xlabel(r"Site $j$")
+    ax.set_ylabel(r"$\langle n_j\rangle$")
+
+    ax.set_xlim(-0.5, N - 0.5)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+    ax.tick_params(axis="both")
+
+    ax.legend(
+        loc="best",
+        fontsize=12,
+        ncol=2,
+    )
+
+    # Rb_value to be added for clarity
+    Rb_display = Rb_value / (2 ** (1/6))
+
+    # Display Rb value being used
+    ax.text(
+    0.5,
+    0.82,                      # adjust slightly if needed
+    fr"$R_b = {Rb_display:.2f}$",
+    transform=ax.transAxes,
+    ha="center",
+    va="top",
+    fontsize=12,
+)
+
+    ax.grid(alpha=0.25, linewidth=0.5)
+
+    # Figure layout
+    fig.tight_layout(pad=0.6)
+
+    # Save figure when path is specified
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, format="png", bbox_inches="tight")
+        print(f"✅ Saved: {save_path.resolve()}")
+    else:
+        plt.show()
+
+    return dens_uniform, dens_boundary
