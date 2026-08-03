@@ -2585,3 +2585,234 @@ def plot_scatter_phase_diagram(
         print(f"✅ Saved: {save_path.resolve()}")
 
     plt.show()
+
+# =================================================================
+# Helper function to compute star / square order parameters and ..
+# .. compare as a function of \delta_{\rm boundary}
+# =================================================================
+def plot_star_square_order_parameters_vs_delta_boundary(
+    results,
+    figsize=(7.2, 5.2),
+    save_folder="figures",
+    filename="star_square_order_parameters_vs_delta_boundary.pdf",
+    dpi=600,
+    use_tex=True,
+    star_color="tab:red",
+    square_color="tab:blue",
+):
+    """
+    Plot O_star and O_square versus delta_boundary using separate y-axes.
+
+    Notes
+    -----
+    The values stored under results["delta_bulk"] are interpreted here as
+    delta_boundary values.
+
+    Parameters
+    ----------
+    results : dict
+        Dictionary containing the NumPy arrays:
+            "O_star"
+            "O_square"
+            "delta_bulk"
+    figsize : tuple, optional
+        Figure size in inches.
+    save_folder : str or pathlib.Path, optional
+        Folder, relative to the main working directory, in which the PDF is
+        saved.
+    filename : str, optional
+        Output PDF filename.
+    dpi : int, optional
+        Resolution used when saving.
+    use_tex : bool, optional
+        Whether to use an external LaTeX installation for text rendering.
+    star_color, square_color : str, optional
+        Colors used for O_star and O_square, respectively.
+
+    Returns
+    -------
+    fig, ax_star, ax_square
+        Matplotlib figure and the two y-axis objects.
+    """
+
+    required_keys = {"O_star", "O_square", "delta_bulk"}
+    missing_keys = required_keys.difference(results)
+
+    if missing_keys:
+        raise KeyError(
+            f"results is missing the required keys: {sorted(missing_keys)}"
+        )
+
+    # The stored delta_bulk values are actually delta_boundary values.
+    delta_boundary = np.asarray(results["delta_bulk"], dtype=float)
+    O_star = np.asarray(results["O_star"], dtype=float)
+    O_square = np.asarray(results["O_square"], dtype=float)
+
+    if not (
+        delta_boundary.ndim == O_star.ndim == O_square.ndim == 1
+    ):
+        raise ValueError("All input arrays must be one-dimensional.")
+
+    if not (
+        len(delta_boundary) == len(O_star) == len(O_square)
+    ):
+        raise ValueError(
+            "delta_boundary, O_star, and O_square must have equal lengths."
+        )
+
+    if len(delta_boundary) == 0:
+        raise ValueError("The input arrays must not be empty.")
+
+    # Sort by boundary detuning before joining points with lines.
+    sort_indices = np.argsort(delta_boundary)
+    delta_boundary = delta_boundary[sort_indices]
+    O_star = O_star[sort_indices]
+    O_square = O_square[sort_indices]
+
+    save_folder = Path(save_folder)
+    save_folder.mkdir(parents=True, exist_ok=True)
+    save_path = save_folder / filename
+
+    # LaTeX rendering for figure
+    rc_params = {
+        "text.usetex": False,
+        "font.family": "serif",
+        "font.serif": ["Nimbus Roman"],
+        "mathtext.fontset": "stix",
+        "font.size": 12,
+        "legend.frameon": False,
+    }
+
+    with plt.rc_context(rc_params):
+        fig, ax_star = plt.subplots(
+            figsize=figsize,
+            dpi=dpi,
+        )
+    
+        ax_square = ax_star.twinx()
+
+        # --------------------------------------------------
+        # Star order parameter: left axis
+        # --------------------------------------------------
+        line_star, = ax_star.plot(
+            delta_boundary,
+            O_star,
+            marker="o",
+            markersize=5,
+            markeredgewidth=1.2,
+            linewidth=2.2,
+            linestyle="-",
+            color=star_color,
+            label=r"$O_{\mathrm{star}}$",
+            zorder=3,
+        )
+
+        # --------------------------------------------------
+        # Square order parameter: right axis
+        # --------------------------------------------------
+        line_square, = ax_square.plot(
+            delta_boundary,
+            O_square,
+            marker="s",
+            markersize=5,
+            markeredgewidth=1.2,
+            linewidth=2.2,
+            linestyle="-",
+            color=square_color,
+            label=r"$O_{\mathrm{square}}$",
+            zorder=3,
+        )
+
+        # --------------------------------------------------
+        # Axis labels
+        # --------------------------------------------------
+        ax_star.set_xlabel(r"$\delta_{\mathrm{boundary}}$")
+        ax_star.set_ylabel(
+            r"$O_{\mathrm{star}}$",
+            color=star_color,
+        )
+        ax_square.set_ylabel(
+            r"$O_{\mathrm{square}}$",
+            color=square_color,
+        )
+
+        # Color-code the y axes.
+        ax_star.tick_params(
+            axis="y",
+            colors=star_color,
+            width=1.2,
+            length=5,
+        )
+        ax_square.tick_params(
+            axis="y",
+            colors=square_color,
+            width=1.2,
+            length=5,
+        )
+        ax_star.tick_params(
+            axis="x",
+            width=1.2,
+            length=5,
+        )
+        ax_star.spines["left"].set_color(star_color)
+        ax_star.spines["left"].set_linewidth(1.5)
+
+        ax_square.spines["right"].set_color(square_color)
+        ax_square.spines["right"].set_linewidth(1.5)
+
+        # Start both order-parameter axes at zero.
+        star_upper = max(1.08 * np.nanmax(O_star), 1.0e-12)
+        square_upper = max(1.08 * np.nanmax(O_square), 1.0e-12)
+
+        # Set ylimits for final figure
+        ax_star.set_ylim(
+            -0.03 * np.nanmax(O_star),
+            1.08 * np.nanmax(O_star),
+        )
+        
+        ax_square.set_ylim(
+            -0.03 * np.nanmax(O_square),
+            1.08 * np.nanmax(O_square),
+        )
+
+        # Display the supplied detuning values explicitly.
+        ax_star.set_xticks(delta_boundary)
+
+        # Grid belongs to the primary axis only.
+        ax_star.grid(
+            True,
+            which="major",
+            axis="both",
+            linestyle="--",
+            linewidth=0.8,
+            alpha=0.45,
+            zorder=0,
+        )
+        ax_star.set_axisbelow(True)
+
+        # Combined legend for both axes.
+        # ax_star.legend(
+        #     handles=[line_star, line_square],
+        #     loc="upper center",
+        #     bbox_to_anchor=(0.5, 1.15),
+        #     ncol=2,
+        #     frameon=False,
+        # )
+
+        # Figure layout
+        fig.tight_layout()
+
+        # Save the figure as a PDF 
+        fig.savefig(
+            save_path,
+            format="pdf",
+            dpi=dpi,
+            bbox_inches="tight",
+        )
+
+        # Notify once figure is saved
+        print(f"Saved figure to: {save_path.resolve()}")
+
+        # plt.show()
+
+    return fig, ax_star, ax_square
